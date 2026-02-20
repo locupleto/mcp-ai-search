@@ -10,6 +10,13 @@ Model Context Protocol (MCP) server providing tools to query **xAI Grok** and **
 - **Multiple models** - Choose from grok-4, grok-3, grok-4-1-fast, and more
 - **Auto-updating aliases** - Use `-latest` suffixes for newest versions
 
+### 🐦 X Search (`search_x`)
+- **Real-time X/Twitter search** - Search actual posts via xAI's server-side X Search
+- **Post citations** - Direct links to source X posts
+- **Handle filters** - Search specific accounts or exclude accounts
+- **Date range** - Filter by date range (YYYY-MM-DD)
+- **Same API key** - Uses the same `GROK_API_KEY` as ask_grok (no separate X Developer account)
+
 ### 🔍 Perplexity AI (`ask_perplexity`)
 - **Real-time web search** - Get current information from the internet
 - **Source citations** - Every answer includes URLs to sources
@@ -173,6 +180,62 @@ Sources:
 Citations: 3 | Model: sonar-pro | Timestamp: 2026-01-02T14:30:45.123456
 ```
 
+### Tool 3: `search_x`
+
+Search X (Twitter) for real-time posts, discussions, and trends via xAI's server-side X Search.
+
+**Parameters:**
+- `query` (string, required): What to search for on X
+- `model` (string, optional): Grok model for analysis (default: `grok-4-1-fast`)
+  - `grok-4-1-fast` - Cheapest, optimized for tool calling (recommended)
+  - `grok-4-latest` - Latest Grok 4
+  - `grok-3-latest` - Latest Grok 3
+- `max_tokens` (integer, optional): 100-16000 (default: 4000)
+- `allowed_x_handles` (array of strings, optional): Only search these accounts (max 10, without @)
+- `excluded_x_handles` (array of strings, optional): Exclude these accounts (max 10, without @)
+- `from_date` (string, optional): Start date in YYYY-MM-DD format
+- `to_date` (string, optional): End date in YYYY-MM-DD format
+
+**Example (via Claude Code):**
+
+```
+User: "Search X for what people are saying about the Fed rate decision"
+
+Claude calls: search_x({
+  "query": "Fed rate decision reaction",
+  "max_tokens": 2000
+})
+```
+
+**Example with filters:**
+
+```
+User: "What has Elon Musk posted about AI this week?"
+
+Claude calls: search_x({
+  "query": "AI artificial intelligence",
+  "allowed_x_handles": ["elonmusk"],
+  "from_date": "2026-02-13",
+  "to_date": "2026-02-20"
+})
+```
+
+**Response Format:**
+```
+Query: Fed rate decision reaction
+Model: grok-4-1-fast
+
+Results:
+[Grok's analysis of X posts with inline citations...]
+
+X Post Sources:
+1. https://x.com/user/status/123456 - Post title
+2. https://x.com/user/status/789012 - Post title
+
+---
+Citations: 2 | Time: 3240ms | Model: grok-4-1-fast | Timestamp: 2026-02-20T14:30:45.123456
+```
+
 ## Testing
 
 Run the test suite to validate the MCP server:
@@ -189,6 +252,8 @@ The test suite includes:
 - ✅ Grok reasoning models
 - ✅ Basic Perplexity searches
 - ✅ Perplexity with recency filters
+- ✅ Basic X Search queries
+- ✅ X Search with handle filters and date range
 - ✅ Error handling
 - ✅ Custom system messages
 

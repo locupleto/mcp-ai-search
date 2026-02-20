@@ -6,6 +6,7 @@ This script tests the MCP server tools to ensure they work correctly:
 - ask_grok: Text queries to Grok models
 - ask_perplexity: Web search with citations
 - generate_image_grok: Image generation with Grok-2-Image (Aurora)
+- search_x: X (Twitter) search via xAI's server-side X Search
 
 Prerequisites:
 - Environment variables GROK_API_KEY and PERPLEXITY_API_KEY must be set
@@ -21,7 +22,7 @@ import asyncio
 from datetime import datetime
 
 # Import server handlers
-from ai_search_mcp_server import handle_ask_grok, handle_ask_perplexity, handle_generate_image_grok, validate_api_keys
+from ai_search_mcp_server import handle_ask_grok, handle_ask_perplexity, handle_generate_image_grok, handle_search_x, validate_api_keys
 
 
 def print_section(title: str):
@@ -227,6 +228,65 @@ async def test_generate_image_grok():
         return False
 
 
+async def test_search_x_basic():
+    """Test basic X search query"""
+    print_section("TEST 9: Basic X Search")
+
+    arguments = {
+        "query": "trending AI discussions today",
+        "model": "grok-4-1-fast",
+        "max_tokens": 1000
+    }
+
+    print(f"Sending X search: {arguments['query']}")
+    print(f"Model: {arguments['model']}\n")
+
+    try:
+        result = await handle_search_x(arguments)
+        print_result(result)
+        if result and "Error" not in result[0].text:
+            print("\n✅ X Search completed successfully")
+            return True
+        else:
+            print("\n❌ X Search returned an error")
+            return False
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return False
+
+
+async def test_search_x_with_filters():
+    """Test X search with handle filters and date range"""
+    print_section("TEST 10: X Search with Filters")
+
+    arguments = {
+        "query": "artificial intelligence",
+        "model": "grok-4-1-fast",
+        "max_tokens": 1000,
+        "allowed_x_handles": ["elonmusk"],
+        "from_date": "2026-02-01",
+        "to_date": "2026-02-20"
+    }
+
+    print(f"Sending X search: {arguments['query']}")
+    print(f"Model: {arguments['model']}")
+    print(f"Handles: {arguments['allowed_x_handles']}")
+    print(f"Date range: {arguments['from_date']} to {arguments['to_date']}\n")
+
+    try:
+        result = await handle_search_x(arguments)
+        print_result(result)
+        if result and "Error" not in result[0].text:
+            print("\n✅ Filtered X Search completed successfully")
+            return True
+        else:
+            print("\n❌ Filtered X Search returned an error")
+            return False
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return False
+
+
 async def run_all_tests():
     """Run all tests and report results"""
     print("\n" + "="*70)
@@ -253,7 +313,9 @@ async def run_all_tests():
         ("Perplexity with Recency", test_ask_perplexity_with_recency),
         ("Error Handling", test_error_handling_missing_question),
         ("Custom System Message", test_grok_with_custom_system_message),
-        ("Grok Image Generation", test_generate_image_grok)
+        ("Grok Image Generation", test_generate_image_grok),
+        ("Basic X Search", test_search_x_basic),
+        ("X Search with Filters", test_search_x_with_filters)
     ]
 
     results = []

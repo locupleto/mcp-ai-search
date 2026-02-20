@@ -5,10 +5,11 @@ MCP Server for xAI Grok and Perplexity AI Search
 This server provides tools to:
 - xAI Grok (ask_grok): LLM inference with 2M token context and reasoning capabilities
 - xAI Grok Image (generate_image_grok): Text-to-image generation with Aurora model
+- xAI X Search (search_x): Search X (Twitter) posts via xAI's server-side X Search
 - Perplexity AI (ask_perplexity): Real-time web search with citations
 
 Environment Variables Required:
-- GROK_API_KEY: xAI API key (xai-...)
+- GROK_API_KEY: xAI API key (xai-...) — used for ask_grok, generate_image_grok, and search_x
 - PERPLEXITY_API_KEY: Perplexity API key (pplx-...)
 """
 
@@ -250,7 +251,7 @@ async def handle_generate_image_grok(arguments: dict) -> Sequence[TextContent]:
         url = "https://api.x.ai/v1/images/generations"
 
         payload = {
-            "model": "grok-2-image-1212",
+            "model": "grok-imagine-image",
             "prompt": prompt,
             "n": n,
             "response_format": response_format
@@ -284,7 +285,7 @@ Image URLs:
 
 ---
 Revised Prompt: {revised_prompt}
-Time: {response_time}ms | Model: grok-2-image"""
+Time: {response_time}ms | Model: grok-imagine-image"""
         else:
             # For b64_json, just indicate success and provide metadata
             result = f"""Prompt: {prompt}
@@ -295,7 +296,7 @@ Format: base64 JSON
 
 ---
 Revised Prompt: {revised_prompt}
-Time: {response_time}ms | Model: grok-2-image"""
+Time: {response_time}ms | Model: grok-imagine-image"""
 
         logger.info(f"✅ Grok image generation: {len(images)} images in {response_time}ms")
         return [TextContent(type="text", text=result)]
@@ -306,6 +307,138 @@ Time: {response_time}ms | Model: grok-2-image"""
         return [TextContent(type="text", text=error_msg)]
     except Exception as e:
         error_msg = f"xAI Image API Error: {str(e)}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
+
+
+async def handle_search_x(arguments: dict) -> Sequence[TextContent]:
+    """
+    Handle X (Twitter) search queries via xAI's Responses API with server-side X Search.
+
+    Args:
+        arguments: Dictionary containing:
+            - query (str): What to search for on X
+            - model (str): Grok model for analysis (default: grok-4-1-fast)
+            - max_tokens (int): Maximum response tokens (default: 4000)
+            - allowed_x_handles (list[str]): Limit to these X accounts (max 10)
+            - excluded_x_handles (list[str]): Exclude these X accounts (max 10)
+            - from_date (str): Start date YYYY-MM-DD
+            - to_date (str): End date YYYY-MM-DD
+
+    Returns:
+        List of TextContent with formatted response including X post citations
+    """
+    query = arguments.get("query")
+    if not query:
+        return [TextContent(type="text", text="Error: 'query' parameter is required")]
+
+    model = arguments.get("model", "grok-4-1-fast")
+    max_tokens = arguments.get("max_tokens", 4000)
+    allowed_x_handles = arguments.get("allowed_x_handles")
+    excluded_x_handles = arguments.get("excluded_x_handles")
+    from_date = arguments.get("from_date")
+    to_date = arguments.get("to_date")
+
+    logger.info(f"🐦 X Search query: model={model}, query={query[:50]}...")
+
+    try:
+        # Build x_search tool config
+        x_search_tool = {"type": "x_search"}
+
+        # Add optional filters only if provided
+        if allowed_x_handles:
+            x_search_tool["x_handles"] = allowed_x_handles
+        if excluded_x_handles:
+            x_search_tool["excluded_x_handles"] = excluded_x_handles
+        if from_date:
+            x_search_tool["from_date"] = from_date
+        if to_date:
+            x_search_tool["to_date"] = to_date
+
+        url = "https://api.x.ai/v1/responses"
+        payload = {
+            "model": model,
+            "input": query,
+            "tools": [x_search_tool],
+            "inline_citations": True,
+            "max_tokens": max_tokens
+        }
+
+        headers = {
+            "Authorization": f"Bearer {GROK_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        start_time = time.time()
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
+        response.raise_for_status()
+        response_time = int((time.time() - start_time) * 1000)
+
+        data = response.json()
+
+        # Extract text content from response output items
+        content_parts = []
+        citations = []
+        model_used = data.get("model", model)
+
+        for item in data.get("output", []):
+            if item.get("type") == "message":
+                for content_block in item.get("content", []):
+                    if content_block.get("type") == "output_text":
+                        text = content_block.get("text", "")
+                        content_parts.append(text)
+                        # Extract citations from annotations
+                        for annotation in content_block.get("annotations", []):
+                            if annotation.get("type") == "url_citation":
+                                cite_url = annotation.get("url", "")
+                                cite_title = annotation.get("title", "")
+                                if cite_url and cite_url not in [c["url"] for c in citations]:
+                                    citations.append({"url": cite_url, "title": cite_title})
+
+        content = "\n".join(content_parts) if content_parts else "No results returned from X Search."
+
+        # Build filter description
+        filters = []
+        if allowed_x_handles:
+            filters.append(f"From: @{', @'.join(allowed_x_handles)}")
+        if excluded_x_handles:
+            filters.append(f"Excluding: @{', @'.join(excluded_x_handles)}")
+        if from_date:
+            filters.append(f"From: {from_date}")
+        if to_date:
+            filters.append(f"To: {to_date}")
+        filter_text = f" | Filters: {'; '.join(filters)}" if filters else ""
+
+        # Format X post sources
+        sources_text = ""
+        if citations:
+            sources_text = "\n\nX Post Sources:\n"
+            for idx, cite in enumerate(citations, 1):
+                title_text = f" - {cite['title']}" if cite['title'] else ""
+                sources_text += f"{idx}. {cite['url']}{title_text}\n"
+
+        result = f"""Query: {query}
+Model: {model}{filter_text}
+
+Results:
+{content}{sources_text}
+
+---
+Citations: {len(citations)} | Time: {response_time}ms | Model: {model_used} | Timestamp: {datetime.now().isoformat()}"""
+
+        logger.info(f"✅ X Search response: {len(citations)} citations in {response_time}ms")
+        return [TextContent(type="text", text=result)]
+
+    except requests.exceptions.HTTPError as e:
+        error_msg = f"xAI X Search API HTTP Error: {e.response.status_code} - {e.response.text}"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
+    except requests.exceptions.Timeout:
+        error_msg = "xAI X Search API Error: Request timed out after 60 seconds"
+        logger.error(error_msg)
+        return [TextContent(type="text", text=error_msg)]
+    except Exception as e:
+        error_msg = f"xAI X Search API Error: {str(e)}"
         logger.error(error_msg)
         return [TextContent(type="text", text=error_msg)]
 
@@ -424,7 +557,7 @@ Optional recency filters: month, week, day, hour""",
         ),
         Tool(
             name="generate_image_grok",
-            description="""Generate images using xAI's Grok-2-Image model (Aurora).
+            description="""Generate images using xAI's Grok Imagine model (Aurora).
 
 Use this tool when you need:
 - Text-to-image generation
@@ -438,7 +571,7 @@ The model excels at:
 - Real-world entities, logos, text in images
 - Human portraits
 
-Pricing: ~$0.016/image (512x512), ~$0.04/image (1024x1024)""",
+Pricing: ~$0.02/image""",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -462,6 +595,69 @@ Pricing: ~$0.016/image (512x512), ~$0.04/image (1024x1024)""",
                 },
                 "required": ["prompt"]
             }
+        ),
+        Tool(
+            name="search_x",
+            description="""Search X (Twitter) for real-time posts, discussions, and trends.
+
+Use this tool when you need:
+- Current discussions and opinions on X/Twitter
+- Real-time social media sentiment on topics
+- What specific X users are posting about
+- Breaking news and trending discussions on X
+- Financial market sentiment from X posts
+
+Uses xAI's server-side X Search — searches actual X posts and returns
+results with direct links to source posts.
+
+Note: Uses the same xAI API key as ask_grok.""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "What to search for on X (Twitter)"
+                    },
+                    "model": {
+                        "type": "string",
+                        "default": "grok-4-1-fast",
+                        "enum": [
+                            "grok-4-1-fast",
+                            "grok-4-latest",
+                            "grok-3-latest"
+                        ],
+                        "description": "Grok model for analyzing X search results (default: grok-4-1-fast, cheapest and optimized for tool calling)"
+                    },
+                    "max_tokens": {
+                        "type": "integer",
+                        "default": 4000,
+                        "minimum": 100,
+                        "maximum": 16000,
+                        "description": "Maximum tokens to generate in the response"
+                    },
+                    "allowed_x_handles": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 10,
+                        "description": "Only search posts from these X handles (max 10, without @ prefix)"
+                    },
+                    "excluded_x_handles": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 10,
+                        "description": "Exclude posts from these X handles (max 10, without @ prefix)"
+                    },
+                    "from_date": {
+                        "type": "string",
+                        "description": "Start date for search range (YYYY-MM-DD format)"
+                    },
+                    "to_date": {
+                        "type": "string",
+                        "description": "End date for search range (YYYY-MM-DD format)"
+                    }
+                },
+                "required": ["query"]
+            }
         )
     ]
 
@@ -475,6 +671,8 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
         return await handle_ask_perplexity(arguments)
     elif name == "generate_image_grok":
         return await handle_generate_image_grok(arguments)
+    elif name == "search_x":
+        return await handle_search_x(arguments)
     else:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
 

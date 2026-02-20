@@ -4,10 +4,12 @@ This file provides guidance to Claude Code when working with the xAI Grok + Perp
 
 ## Server Overview
 
-This MCP server provides two tools for querying external AI services:
+This MCP server provides four tools for querying external AI services:
 
 1. **ask_grok**: Query xAI's Grok models (2M token context, reasoning capabilities)
 2. **ask_perplexity**: Real-time web search with source citations
+3. **generate_image_grok**: Text-to-image generation with Grok-2-Image (Aurora)
+4. **search_x**: Search X (Twitter) posts via xAI's server-side X Search
 
 ## When to Use These Tools
 
@@ -35,6 +37,39 @@ This MCP server provides two tools for querying external AI services:
 - "Search the web for information on..."
 - "What's the current weather/stock price/..."
 - "Use Perplexity to find..."
+
+### Use `search_x` when:
+- User needs **current discussions or sentiment from X/Twitter**
+- Task requires monitoring **what specific people are posting** on X
+- User needs **real-time social media reactions** to events
+- Financial market sentiment analysis from X posts
+- User explicitly requests X/Twitter search
+
+**Example user requests:**
+- "What are people saying on X about...?"
+- "Search Twitter for discussions about..."
+- "What has @elonmusk posted about...?"
+- "What's the sentiment on X about the Fed meeting?"
+
+**Parameters:**
+```python
+{
+  "query": str,                 # Required: Search query
+  "model": str,                 # Optional: Default "grok-4-1-fast"
+                                # Options: grok-4-1-fast, grok-4-latest, grok-3-latest
+  "max_tokens": int,            # Optional: 100-16000, default 4000
+  "allowed_x_handles": list,    # Optional: Only these handles (max 10)
+  "excluded_x_handles": list,   # Optional: Exclude these handles (max 10)
+  "from_date": str,             # Optional: Start date YYYY-MM-DD
+  "to_date": str                # Optional: End date YYYY-MM-DD
+}
+```
+
+**Notes:**
+- Uses xAI's `/v1/responses` endpoint with server-side X Search (NOT the chat completions endpoint)
+- Same `GROK_API_KEY` as `ask_grok` — no separate X Developer account needed
+- Returns inline citations with direct links to X posts
+- `grok-4-1-fast` is the default (cheapest, optimized for tool calling)
 
 ### DO NOT use these tools when:
 - Information is within Claude's knowledge cutoff (January 2025)
@@ -155,6 +190,7 @@ Example: Research task + analysis
 
 ### API Implementation
 - **xAI Grok**: Uses OpenAI-compatible API (`base_url="https://api.x.ai/v1"`)
+- **xAI X Search**: Direct REST API (`https://api.x.ai/v1/responses`) with `x_search` tool type
 - **Perplexity**: Direct REST API (`https://api.perplexity.ai/chat/completions`)
 
 ## Troubleshooting
@@ -223,6 +259,36 @@ Claude: This requires step-by-step reasoning. I'll use Grok's reasoning model.
 })]
 
 [Presents solution to user]
+```
+
+### Example 4: X/Twitter Search
+```
+User: "What are people saying on X about the latest Fed rate decision?"
+
+Claude: I'll search X for current discussions on this topic.
+
+[Calls search_x({
+  "query": "Fed rate decision latest reaction",
+  "max_tokens": 2000
+})]
+
+[Presents X posts and sentiment analysis with links to source posts]
+```
+
+### Example 5: Filtered X Search
+```
+User: "What has Elon Musk posted about AI this week?"
+
+Claude: I'll search X filtered to Elon Musk's account.
+
+[Calls search_x({
+  "query": "AI artificial intelligence",
+  "allowed_x_handles": ["elonmusk"],
+  "from_date": "2026-02-13",
+  "to_date": "2026-02-20"
+})]
+
+[Presents filtered results with links to specific posts]
 ```
 
 ## Maintenance
