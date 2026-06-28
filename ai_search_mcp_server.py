@@ -361,7 +361,9 @@ async def handle_search_x(arguments: dict) -> Sequence[TextContent]:
             "input": query,
             "tools": [x_search_tool],
             "inline_citations": True,
-            "max_tokens": max_tokens
+            # xAI /v1/responses requires max_output_tokens; max_tokens is
+            # chat-completions-only and is rejected (returns 0 results).
+            "max_output_tokens": max_tokens
         }
 
         headers = {
