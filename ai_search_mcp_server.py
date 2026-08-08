@@ -22,7 +22,7 @@ from typing import Any, Sequence
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import Tool, TextContent, CallToolResult, ListToolsResult
 from openai import OpenAI
 import requests
 
@@ -33,9 +33,6 @@ logger = logging.getLogger("ai-search-mcp")
 # Environment variables
 GROK_API_KEY = os.environ.get("GROK_API_KEY", "")
 PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
-
-# Initialize MCP server
-server = Server("ai-search")
 
 
 def validate_api_keys():
@@ -445,7 +442,6 @@ Citations: {len(citations)} | Time: {response_time}ms | Model: {model_used} | Ti
         return [TextContent(type="text", text=error_msg)]
 
 
-@server.list_tools()
 async def list_tools() -> list[Tool]:
     """List available MCP tools"""
     return [
@@ -664,7 +660,6 @@ Note: Uses the same xAI API key as ask_grok.""",
     ]
 
 
-@server.call_tool()
 async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
     """Handle tool calls"""
     if name == "ask_grok":
@@ -677,6 +672,37 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
         return await handle_search_x(arguments)
     else:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
+
+
+# --- MCP SDK 2.x adapters ----------------------------------------------------
+# list_tools()/call_tool() above keep their v1 signatures so tests and scripts
+# can import and call them directly. These thin adapters bridge them to the
+# SDK 2.x handler contract (ctx/params in, *Result models out) and restore v1
+# error semantics: any exception from the legacy handler becomes
+# CallToolResult(is_error=True, text=str(e)) — readable by the model — instead
+# of an opaque JSON-RPC internal error.
+
+async def _on_list_tools(ctx, params) -> ListToolsResult:
+    return ListToolsResult(tools=await list_tools())
+
+
+async def _on_call_tool(ctx, params) -> CallToolResult:
+    try:
+        content = await call_tool(params.name, params.arguments or {})
+        return CallToolResult(content=list(content), is_error=False)
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=str(e))],
+            is_error=True,
+        )
+
+
+server = Server(
+    "ai-search",
+    version="1.0.0",
+    on_list_tools=_on_list_tools,
+    on_call_tool=_on_call_tool,
+)
 
 
 async def main():
